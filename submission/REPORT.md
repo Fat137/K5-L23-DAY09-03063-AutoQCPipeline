@@ -55,7 +55,23 @@ Số liệu từ `02_error_list_v1` (mẫu số: 224 ảnh ở bước nhận, 2
 3. **Nhầm lớp mà model lớn cũng nhầm:** recall `POSSIBLE_WRONG_CLASS` là 0,83 (bỏ sót 1/6 lỗi chèn). Các lỗi này không xuất hiện trong báo cáo nào.
 
 ## 5. Train: raw vs clean (tùy chọn, chấm riêng)
-Chưa chạy tại thời điểm viết báo cáo này. Kết quả sẽ được cập nhật sau khi train trên Colab.
+Cấu hình: `yolo26n.pt`, 20 epoch, 2 seed (0 và 1), batch 16, ảnh 640 px, GPU trên Colab. Hai biến thể dùng chung tập val (`gold_val`, 40 ảnh) và tập test (100 ảnh). Bảng dưới lấy từ `submission/results/comparison.md`.
+
+| biến thể | #ảnh train | số seed | map50 (TB ± độ lệch) | map50_95 (TB ± độ lệch) | precision (TB ± độ lệch) | recall (TB ± độ lệch) |
+|---|---|---|---|---|---|---|
+| raw | 224 | 2 | 0.726 ± 0.000 | 0.512 ± 0.004 | 0.764 ± 0.061 | 0.649 ± 0.028 |
+| clean | 202 | 2 | 0.701 ± 0.025 | 0.487 ± 0.008 | 0.759 ± 0.003 | 0.625 ± 0.019 |
+
+**Kết luận: không có bằng chứng `clean` tốt hơn `raw`.** Chênh mAP50 (clean − raw) là **−0,025**, xấp xỉ độ lệch chuẩn giữa các seed của `clean` (0,025), nên nằm trong nhiễu. Chênh mAP50-95 là −0,024, lớn hơn độ lệch chuẩn (tối đa 0,008) và cùng chiều ở cả 2 seed, nên `clean` có dấu hiệu thấp hơn. Tuy vậy 2 seed là quá ít để khẳng định.
+
+**Mức giảm tập trung ở lớp truck:** AP50 của truck giảm 0,111 (0,648 → 0,538), trong khi car, person và bus gần như không đổi (+0,001, +0,001, +0,008). AP50 truck của `clean` cũng dao động mạnh giữa 2 seed (0,590 và 0,486).
+
+**Giả thuyết và cách kiểm:**
+1. **Nhãn truck trong `clean` không đồng nhất.** Số box truck không giảm mà tăng (32 ở `raw`, 41 ở `clean`), và toàn bộ phần tăng đến từ 80 ảnh người duyệt (16 → 28 box), còn 122 ảnh chưa duyệt vẫn giữ nhãn máy. Lớp này chỉ có 21 ảnh nên dễ bị ảnh hưởng. Cách kiểm: train thêm biến thể `oracle` (toàn bộ nhãn người) với ít nhất 5 seed.
+2. **Điểm của `raw` bị thổi phồng do rò rỉ.** `raw` còn 5 ảnh trùng tập test (`LEAK_TEST`), trong đó `img_0101` có box truck. Cách kiểm: đánh giá lại cả hai model trên 95 ảnh test còn lại sau khi bỏ 5 ảnh trùng.
+3. **`raw` có nhiều ảnh train hơn** (224 so với 202), dù một phần là ảnh trùng hoặc ảnh hỏng. Cách kiểm: train `raw` trên đúng 202 ảnh của `clean`, chỉ khác nhãn.
+
+**Việc tiếp theo:** duyệt thêm ít nhất 18 ảnh để qua cửa Hold, ưu tiên ảnh có truck, rồi train lại với ít nhất 5 seed.
 
 ## 6. Quyết định và ghi chú AI
 **(a) Quyết định cuối: Hold.** Không phát hành `clean_v1`. Để chuyển thành Release cần tỉ lệ ảnh còn cảnh báo dưới 10%, tức tối đa 20/202 ảnh. Nghĩa là người phải duyệt thêm **ít nhất 18 ảnh có cảnh báo** trong số 38 ảnh còn lại (tổng ngân sách tối thiểu 98 ảnh), rồi chạy lại pipeline.
