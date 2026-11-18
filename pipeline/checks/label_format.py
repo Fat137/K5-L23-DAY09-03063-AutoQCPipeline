@@ -24,6 +24,51 @@ Gợi ý
 from ..common import ERROR, WARN, Issue, iou_xywh, parse_yolo_line  # noqa: F401
 
 
+CHECK = "label_format"
+
+
+def _check_file(ds, stem, cfg):
+    """Kiểm mọi dòng của một file nhãn; dòng hỏng chỉ bị báo, không làm dừng các dòng sau."""
+    lf = cfg["label_format"]
+    n_classes = len(ds.classes)
+    size = ds.image_size(stem)              # None nếu ảnh hỏng/không có ảnh: khi đó bỏ qua BOX_TINY
+    issues = []
+    seen = []                               # (lớp, box) các dòng hợp lệ phía trước, để tìm box lặp
+
+    def report(severity, code, line, message, extra=None):
+        issues.append(Issue(CHECK, severity, code, stem, message, line, extra or {}))
+
+    for line, text in ds.read_label_lines(stem) or []:
+        try:
+            cls, cx, cy, w, h = parse_yolo_line(text)
+        except (ValueError, OverflowError) as e:    # OverflowError: id lớp là "inf" thì int() không đổi được
+            report(ERROR, "BAD_FORMAT", line, f"dòng không đúng 5 cột số: {e}")
+            continue
+        if not 0 <= cls < n_classes:
+            report(ERROR, "BAD_CLASS_ID", line, f"id lớp {cls} ngoài 0..{n_classes - 1}")
+            continue
+        if w <= 0 or h <= 0:
+            report(ERROR, "BOX_ZERO", line, f"box không có diện tích: w={w}, h={h}")
+            continue
+
+        overflow = max(-(cx - w / 2), -(cy - h / 2), cx + w / 2 - 1, cy + h / 2 - 1)
+        if overflow > lf["overflow_tol"]:
+            report(ERROR, "BOX_OUT_OF_IMAGE", line, f"box tràn ảnh {overflow:.4f}", {"overflow": round(overflow, 6)})
+
+        box = (cx, cy, w, h)
+        if any(c == cls and iou_xywh(box, b) > lf["dup_box_iou"] for c, b in seen):
+            report(ERROR, "DUP_BOX", line, f"box lặp với một dòng trước đó cùng lớp {cls}")
+        seen.append((cls, box))
+
+        if size and min(w * size[0], h * size[1]) < lf["min_box_px"]:
+            report(WARN, "BOX_TINY", line, f"cạnh ngắn của box dưới {lf['min_box_px']} px")
+        if w * h > lf["max_box_frac"]:
+            report(WARN, "BOX_HUGE", line, f"box phủ {w * h:.0%} diện tích ảnh")
+    return issues
+
+
 def run(ds, cfg):
-    # TODO: duyệt từng file nhãn, từng dòng
-    raise NotImplementedError("check label_format chưa làm")
+    issues = []
+    for path in ds.label_files():
+        issues.extend(_check_file(ds, path.stem, cfg))
+    return issues
