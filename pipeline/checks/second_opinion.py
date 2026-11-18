@@ -39,6 +39,72 @@ from ..common import WARN, Issue, iou_xywh, parse_yolo_line  # noqa: F401
 from ..model_cache import get_preds  # noqa: F401
 
 
+CHECK = "second_opinion"
+
+
+def _valid_labels(ds, stem):
+    """[(số dòng gốc, lớp, box)] của các dòng hợp lệ. Dòng hỏng để label_format báo, ở đây chỉ bỏ qua."""
+    labels = []
+    for line, text in ds.read_label_lines(stem) or []:
+        try:
+            cls, *box = parse_yolo_line(text)
+        except (ValueError, OverflowError):     # OverflowError: id lớp là "inf"; valid_boxes không bắt ca này
+            continue
+        if 0 <= cls < len(ds.classes):
+            labels.append((line, cls, tuple(box)))
+    return labels
+
+
+def _judge_prediction(cls, box, labels, so):
+    """Quyết định cho MỘT dự đoán: trả (mã lỗi, IoU tốt nhất) hoặc None nếu không cờ."""
+    cands = [(iou_xywh(box, b), c) for _, c, b in labels]
+    cands = [(iou, c) for iou, c in cands if iou >= so["iou_missing"]]
+    if not cands:
+        return "POSSIBLE_MISSING", 0.0
+
+    same = [iou for iou, c in cands if c == cls]
+    if same:
+        best = max(same)
+        return ("POSSIBLE_LOOSE_BOX", best) if best < so["iou_loose"] else None
+
+    best = max(iou for iou, _ in cands)
+    return ("POSSIBLE_WRONG_CLASS", best) if best >= so["iou_match"] else None
+
+
+def _check_image(ds, stem, rows, cfg):
+    so = cfg["second_opinion"]
+    size = ds.image_size(stem)
+    labels = _valid_labels(ds, stem)
+    if size is None:                            # ảnh hỏng: check images báo, ở đây không tính được diện tích px
+        return []
+    width, height = size
+    issues = []
+
+    for row in rows:
+        cls, conf, box = row[0], row[1], tuple(row[2:6])
+        if conf < so["conf"] or box[2] * width * box[3] * height < so["min_area_px"]:
+            continue
+        verdict = _judge_prediction(cls, box, labels, so)
+        if verdict:
+            code, iou = verdict
+            message = f"model thấy lớp {ds.classes[cls]} (conf {conf:.2f}), IoU tốt nhất với nhãn {iou:.2f}"
+            issues.append(Issue(CHECK, WARN, code, stem, message, extra={"conf": conf, "iou": round(iou, 4)}))
+
+    trusted = [tuple(r[2:6]) for r in rows if r[1] >= so["fp_conf"]]
+    for line, cls, box in labels:
+        best = max((iou_xywh(box, p) for p in trusted), default=0.0)
+        if best < so["iou_missing"]:
+            message = f"box lớp {ds.classes[cls]} không khớp vật nào model thấy (IoU tốt nhất {best:.2f})"
+            issues.append(Issue(CHECK, WARN, "POSSIBLE_FALSE_POS", stem, message, line, {"iou": round(best, 4)}))
+    return issues
+
+
 def run(ds, cfg, preds=None):
-    # TODO
-    raise NotImplementedError("check second_opinion chưa làm")
+    if preds is None:
+        preds = get_preds(ds, cfg, "checker")
+    issues = []
+    for path in ds.image_files():
+        stem = path.stem
+        if stem in preds and ds.label_path(stem).exists():
+            issues.extend(_check_image(ds, stem, preds[stem], cfg))
+    return issues
