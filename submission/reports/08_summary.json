@@ -1,0 +1,19 @@
+{
+  "verdict": {
+    "decision": "Hold",
+    "n_errors": 0,
+    "n_warn_images": 38,
+    "n_images": 202,
+    "warn_ratio": 0.1881,
+    "reasons": [
+      "không còn lỗi bắt buộc",
+      "38/202 ảnh còn cảnh báo chưa người duyệt (18.8%, ngưỡng Hold 10%)"
+    ]
+  },
+  "reviewed": 80,
+  "budget": 80,
+  "seconds": 8.1,
+  "exported": "D:\\study\\AI_Vin\\Day-09\\K5-L23-DAY09-03063-AutoQCPipeline\\submission\\export\\clean_v1",
+  "config_sha1": "931de84d25e796d472dab6b113df13bbd72ab195",
+  "review_sim_sha1": "7988ca22827f780a7043a2300490e679a1697154"
+}
